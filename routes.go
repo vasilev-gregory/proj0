@@ -15,11 +15,11 @@ func Routes() {
 
 	r.Route("/", func(r chi.Router) {
 		r.Get("/users", GetAll)
-		r.Post("/users", Post)
+		r.Post("/users", Create)
 		r.Post("/users/auth", Auth)
 		r.Get("/users/{ID:[0-9]+}", GetOne)
-		r.Post("/users/{ID:[0-9]+}", PostOne)
-		r.Delete("/users/{ID:[0-9]+}", DelOne)
+		r.Post("/users/{ID:[0-9]+}", Update)
+		r.Delete("/users/{ID:[0-9]+}", Del)
 	})
 	http.ListenAndServe(":3337", r)
 }
