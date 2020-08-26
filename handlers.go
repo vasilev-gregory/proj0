@@ -16,11 +16,6 @@ import (
 
 var jwtKey = []byte("secret")
 
-type tokens struct {
-	AccessToken    string `json:"access_token"`
-	ExpirationTime string `json:"expiration_time`
-}
-
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
 	return string(bytes), err
@@ -42,17 +37,17 @@ func response(w http.ResponseWriter, code int, message string) {
 func isValidID(w http.ResponseWriter, id string) bool {
 	reqID, _ := strconv.Atoi(id)
 	db.Find(&users)
-	if len(users) < reqID {
+	if int(users[len(users)-1].ID) < reqID {
 		response(w, http.StatusNotFound, "try lower ID")
 		return false
 	}
 	return true
 }
 
-func isValidName(w http.ResponseWriter, name string) bool {
+func isValidName(w http.ResponseWriter, name string, id ...string) bool {
 	var tmp []User
 	db.Where("name = ?", name).Find(&tmp)
-	if len(tmp) == 0 {
+	if len(tmp) == 0 || (len(id) != 0 && fmt.Sprint(tmp[0].ID) == id[0]) {
 		return true
 	}
 	response(w, http.StatusOK, "choose another name")
@@ -67,11 +62,14 @@ func isValidAge(w http.ResponseWriter, age int) bool {
 	return false
 }
 
-func isValidToken(w http.ResponseWriter, r *http.Request, onlyForAdmins bool) bool {
+func isValidToken(w http.ResponseWriter, r *http.Request, id ...string) bool {
 	tknStr := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
+	if len(tknStr) == 1 {
+		response(w, http.StatusBadRequest, "need token")
+		return false
+	}
 	// Initialize a new instance of `Claims`
 	claims := &jwt.StandardClaims{}
-
 	// Parse the JWT string and store the result in `claims`.
 	// Note that we are passing the key in this method as well. This method will return an error
 	// if the token is invalid (if it has expired according to the expiry time we set on sign in),
@@ -84,20 +82,20 @@ func isValidToken(w http.ResponseWriter, r *http.Request, onlyForAdmins bool) bo
 			response(w, http.StatusUnauthorized, "ErrSignatureInvalid")
 			return false
 		}
-		response(w, http.StatusBadRequest, "something wrong")
+		response(w, http.StatusBadRequest, "something wrong with token")
 		return false
 	}
 	if !tkn.Valid {
 		response(w, http.StatusUnauthorized, "time is up")
 		return false
 	}
+
 	var u User
 	db.Where("id = ?", claims.Id).Find(&u)
-	if onlyForAdmins == true && u.IsAdmin == false {
-		response(w, http.StatusForbidden, "need to be admin")
+	if u.IsAdmin == false && len(id) != 0 && id[0] != claims.Id {
+		response(w, http.StatusForbidden, "access denied")
 		return false
 	}
-
 	return true
 }
 
@@ -110,10 +108,6 @@ func GetAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func Create(w http.ResponseWriter, r *http.Request) {
-	if !isValidToken(w, r, true) {
-		return
-	}
-
 	var userIn UserIn
 
 	err := json.NewDecoder(r.Body).Decode(&userIn)
@@ -144,11 +138,11 @@ func Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func Update(w http.ResponseWriter, r *http.Request) {
-	if !isValidToken(w, r, true) {
+	requestedID := chi.URLParam(r, "ID")
+
+	if !isValidToken(w, r, requestedID) {
 		return
 	}
-
-	requestedID := chi.URLParam(r, "ID")
 
 	var userIn UserIn
 	err := json.NewDecoder(r.Body).Decode(&userIn)
@@ -158,7 +152,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	}
 	// считываем введенную строку в UserIn
 
-	if !isValidID(w, requestedID) || !isValidName(w, userIn.Name) || !isValidAge(w, userIn.Age) {
+	if !isValidID(w, requestedID) || !isValidName(w, userIn.Name, requestedID) || !isValidAge(w, userIn.Age) {
 		return
 	}
 	// проверка валидности айди
@@ -177,7 +171,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	w.Write(ujson)
 	// выводим в тело добавленную строку
 
-	response(w, http.StatusOK, fmt.Sprintf("new user at ID = %v", requestedID))
+	response(w, http.StatusOK, fmt.Sprintf("user updated"))
 	// выводим статус выполнения задачи
 }
 
@@ -223,16 +217,17 @@ func Auth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tkns := tokens{
-		AccessToken:    tokenString,
-		ExpirationTime: expirationTime.Format("2006-01-02T15:04:05.999999-07:00"),
+	stText := []byte(http.StatusText(http.StatusOK))
+	mapD := map[string]string{
+		"message":         "valid login-password",
+		"status_text":     string(stText),
+		"access_token":    tokenString,
+		"expiration_time": expirationTime.Format("2006-01-02T15:04:05.999999-07:00"),
+		"id":              fmt.Sprint(user.ID),
 	}
-
-	response(w, http.StatusOK, "valid login-password, token is out without any problems, and you are:")
-	jsn, _ := json.Marshal(user)
-	w.Write(jsn)
-	jsn1, _ := json.Marshal(tkns)
-	w.Write(jsn1)
+	mapB, _ := json.Marshal(mapD)
+	w.WriteHeader(http.StatusOK)
+	w.Write(mapB)
 }
 
 func GetOne(w http.ResponseWriter, r *http.Request) {
@@ -245,10 +240,10 @@ func GetOne(w http.ResponseWriter, r *http.Request) {
 }
 
 func Del(w http.ResponseWriter, r *http.Request) {
-	if !isValidToken(w, r, true) {
+	requestedID := chi.URLParam(r, "ID")
+	if !isValidToken(w, r, requestedID) {
 		return
 	}
-	requestedID := chi.URLParam(r, "ID")
 	db.Where("ID = ?", requestedID).Delete(&users)
 	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v was deleted", requestedID))
 }
