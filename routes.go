@@ -3,11 +3,13 @@ package main
 import (
 	"net/http"
 
+	"github.com/chi/middleware"
 	"github.com/go-chi/chi"
 )
 
 func Routes() {
 	r := chi.NewRouter()
+	r.Use(middleware.Logger)
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("root"))

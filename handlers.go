@@ -4,104 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 
 	"github.com/go-chi/chi"
-	"golang.org/x/crypto/bcrypt"
 )
-
-var jwtKey = []byte("secret")
-
-func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
-	return string(bytes), err
-}
-
-func CheckPasswordHash(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
-}
-
-func response(w http.ResponseWriter, code int, message string) {
-	stText := []byte(http.StatusText(code))
-	mapD := map[string]string{"message": message, "status_text": string(stText)}
-	mapB, _ := json.Marshal(mapD)
-	w.WriteHeader(code)
-	w.Write(mapB)
-}
-
-func isValidID(w http.ResponseWriter, id string) bool {
-	reqID, _ := strconv.Atoi(id)
-	db.Find(&users)
-	if int(users[len(users)-1].ID) < reqID {
-		response(w, http.StatusNotFound, "try lower ID")
-		return false
-	}
-	return true
-}
-
-func isValidName(w http.ResponseWriter, name string, id ...string) bool {
-	var tmp []User
-	db.Where("name = ?", name).Find(&tmp)
-	if len(tmp) == 0 || (len(id) != 0 && fmt.Sprint(tmp[0].ID) == id[0]) {
-		return true
-	}
-	response(w, http.StatusOK, "choose another name")
-	return false
-}
-
-func isValidAge(w http.ResponseWriter, age int) bool {
-	if age > 0 && age < 130 {
-		return true
-	}
-	response(w, http.StatusOK, "something wrong with age")
-	return false
-}
-
-func isValidToken(w http.ResponseWriter, r *http.Request, id ...string) bool {
-	tknStr := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-	if len(tknStr) == 1 {
-		response(w, http.StatusBadRequest, "need token")
-		return false
-	}
-	// Initialize a new instance of `Claims`
-	claims := &jwt.StandardClaims{}
-	// Parse the JWT string and store the result in `claims`.
-	// Note that we are passing the key in this method as well. This method will return an error
-	// if the token is invalid (if it has expired according to the expiry time we set on sign in),
-	// or if the signature does not match
-	tkn, err := jwt.ParseWithClaims(tknStr[1], claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
-			response(w, http.StatusUnauthorized, "ErrSignatureInvalid")
-			return false
-		}
-		response(w, http.StatusBadRequest, "something wrong with token")
-		return false
-	}
-	if !tkn.Valid {
-		response(w, http.StatusUnauthorized, "time is up")
-		return false
-	}
-
-	var u User
-	db.Where("id = ?", claims.Id).Find(&u)
-	if u.IsAdmin == false && len(id) != 0 && id[0] != claims.Id {
-		response(w, http.StatusForbidden, "access denied")
-		return false
-	}
-	return true
-}
 
 func GetAll(w http.ResponseWriter, r *http.Request) {
 	db.Find(&users)
 	jsn, _ := json.Marshal(users)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsn)
 	// все юзеры наружу
 	response(w, http.StatusOK, "all users")
@@ -130,6 +43,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	// добавляем новую строку в дб
 
 	ujson, _ := json.Marshal(u)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(ujson)
 	// выводим новую строку
 
@@ -168,6 +82,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	var u User
 	db.Where("name = ?", userIn.Name).Find(&u)
 	ujson, _ := json.Marshal(u)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(ujson)
 	// выводим в тело добавленную строку
 
@@ -226,6 +141,7 @@ func Auth(w http.ResponseWriter, r *http.Request) {
 		"id":              fmt.Sprint(user.ID),
 	}
 	mapB, _ := json.Marshal(mapD)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(mapB)
 }
@@ -235,6 +151,7 @@ func GetOne(w http.ResponseWriter, r *http.Request) {
 	var userID User
 	db.First(&userID, requestedID)
 	jsnID, _ := json.Marshal(userID)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsnID)
 	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v", requestedID))
 }
@@ -247,3 +164,19 @@ func Del(w http.ResponseWriter, r *http.Request) {
 	db.Where("ID = ?", requestedID).Delete(&users)
 	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v was deleted", requestedID))
 }
+
+// func OnlyAdmin(h http.Handler) http.Handler {
+// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// 		if r.Method == "OPTIONS" {
+// 			h.ServeHTTP(w, r)
+// 		} else {
+// 			tokenString, _ := jwtmiddleware.FromAuthHeader(r)
+// 			if !matchRole(tokenString, "admin") {
+// 				customRoleError(w, "Отказано в доступе", 403)
+// 				return
+// 			}
+
+// 			h.ServeHTTP(w, r)
+// 		}
+// 	})
+// }
