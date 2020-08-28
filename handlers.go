@@ -13,11 +13,7 @@ import (
 
 func GetAll(w http.ResponseWriter, r *http.Request) {
 	db.Find(&users)
-	jsn, _ := json.Marshal(users)
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsn)
-	// все юзеры наружу
-	response(w, http.StatusOK, "all users")
+	response(w, http.StatusOK, "all users", users)
 }
 
 func Create(w http.ResponseWriter, r *http.Request) {
@@ -42,21 +38,12 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	db.Create(&u)
 	// добавляем новую строку в дб
 
-	ujson, _ := json.Marshal(u)
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(ujson)
-	// выводим новую строку
-
-	response(w, http.StatusOK, "new user at the bottom")
+	response(w, http.StatusOK, "new user at the bottom", []User{u})
 	// выводим статус выполнения задачи
 }
 
 func Update(w http.ResponseWriter, r *http.Request) {
 	requestedID := chi.URLParam(r, "ID")
-
-	if !isValidToken(w, r, requestedID) {
-		return
-	}
 
 	var userIn UserIn
 	err := json.NewDecoder(r.Body).Decode(&userIn)
@@ -81,16 +68,12 @@ func Update(w http.ResponseWriter, r *http.Request) {
 
 	var u User
 	db.Where("name = ?", userIn.Name).Find(&u)
-	ujson, _ := json.Marshal(u)
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(ujson)
-	// выводим в тело добавленную строку
 
-	response(w, http.StatusOK, fmt.Sprintf("user updated"))
+	response(w, http.StatusOK, fmt.Sprintf("user updated"), []User{u})
 	// выводим статус выполнения задачи
 }
 
-func Auth(w http.ResponseWriter, r *http.Request) {
+func Login(w http.ResponseWriter, r *http.Request) {
 	var (
 		loginPassword UserIn // это читаем
 		user          User   // с этим сравниваем
@@ -150,17 +133,11 @@ func GetOne(w http.ResponseWriter, r *http.Request) {
 	requestedID := chi.URLParam(r, "ID")
 	var userID User
 	db.First(&userID, requestedID)
-	jsnID, _ := json.Marshal(userID)
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsnID)
-	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v", requestedID))
+	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v", requestedID), []User{userID})
 }
 
 func Del(w http.ResponseWriter, r *http.Request) {
 	requestedID := chi.URLParam(r, "ID")
-	if !isValidToken(w, r, requestedID) {
-		return
-	}
 	db.Where("ID = ?", requestedID).Delete(&users)
 	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v was deleted", requestedID))
 }

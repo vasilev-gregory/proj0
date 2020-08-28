@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/dgrijalva/jwt-go"
+	"github.com/go-chi/chi"
 	"github.com/go-chi/jwtauth"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,10 +24,18 @@ func CheckPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-func response(w http.ResponseWriter, code int, message string) {
-	stText := []byte(http.StatusText(code))
-	mapD := map[string]string{"message": message, "status_text": string(stText)}
-	mapB, _ := json.Marshal(mapD)
+func response(w http.ResponseWriter, code int, message string, users ...[]User) {
+	type responseType struct {
+		Users      []User `json:"users"`
+		Message    string `json:"message"`
+		StatusText string `json:"status_text"`
+	}
+	stText := http.StatusText(code)
+	rspns := responseType{Message: message, StatusText: stText}
+	if len(users) != 0 {
+		rspns.Users = users[0]
+	}
+	mapB, _ := json.Marshal(rspns)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write(mapB)
@@ -60,40 +69,48 @@ func isValidAge(w http.ResponseWriter, age int) bool {
 	return false
 }
 
-func isValidToken(w http.ResponseWriter, r *http.Request, id ...string) bool {
-	// tknStr := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-	tknStr := jwtauth.TokenFromHeader(r)
-	if len(tknStr) == 0 {
-		response(w, http.StatusBadRequest, "need token")
-		return false
-	}
-	// Initialize a new instance of `Claims`
-	claims := &jwt.StandardClaims{}
-	// Parse the JWT string and store the result in `claims`.
-	// Note that we are passing the key in this method as well. This method will return an error
-	// if the token is invalid (if it has expired according to the expiry time we set on sign in),
-	// or if the signature does not match
-	tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
-			response(w, http.StatusUnauthorized, "ErrSignatureInvalid")
-			return false
+func RequireAuthentication(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			next.ServeHTTP(w, r)
+			return
 		}
-		response(w, http.StatusBadRequest, "something wrong with token")
-		return false
-	}
-	if !tkn.Valid {
-		response(w, http.StatusUnauthorized, "time is up")
-		return false
-	}
 
-	var u User
-	db.Where("id = ?", claims.Id).Find(&u)
-	if u.IsAdmin == false && len(id) != 0 && id[0] != claims.Id {
-		response(w, http.StatusForbidden, "access denied")
-		return false
-	}
-	return true
+		tknStr := jwtauth.TokenFromHeader(r)
+		if len(tknStr) == 0 {
+			response(w, http.StatusBadRequest, "need token")
+			return
+		}
+		// Initialize a new instance of `Claims`
+		claims := &jwt.StandardClaims{}
+		// Parse the JWT string and store the result in `claims`.
+		// Note that we are passing the key in this method as well. This method will return an error
+		// if the token is invalid (if it has expired according to the expiry time we set on sign in),
+		// or if the signature does not match
+		tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+		if err != nil {
+			if err == jwt.ErrSignatureInvalid {
+				response(w, http.StatusUnauthorized, "ErrSignatureInvalid")
+				return
+			}
+			response(w, http.StatusBadRequest, "something wrong with token")
+			return
+		}
+		if !tkn.Valid {
+			response(w, http.StatusUnauthorized, "time is up")
+			return
+		}
+
+		id := chi.URLParam(r, "ID")
+		var u User
+		db.Where("id = ?", claims.Id).Find(&u)
+		if u.IsAdmin == false && id != claims.Id {
+			response(w, http.StatusForbidden, "access denied")
+			return
+		}
+		// Assuming that passed, we can execute the authenticated handler
+		next.ServeHTTP(w, r)
+	})
 }
