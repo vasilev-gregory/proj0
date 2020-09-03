@@ -24,14 +24,9 @@ func CheckPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-func response(w http.ResponseWriter, code int, message string, users ...[]User) {
-	type responseType struct {
-		Users      []User `json:"users"`
-		Message    string `json:"message"`
-		StatusText string `json:"status_text"`
-	}
+func resp(w http.ResponseWriter, code int, message string, users ...[]User) {
 	stText := http.StatusText(code)
-	rspns := responseType{Message: message, StatusText: stText}
+	rspns := response{Message: message, StatusText: stText}
 	if len(users) != 0 {
 		rspns.Users = users[0]
 	}
@@ -41,23 +36,13 @@ func response(w http.ResponseWriter, code int, message string, users ...[]User) 
 	w.Write(mapB)
 }
 
-func isValidID(w http.ResponseWriter, id string) bool {
-	reqID, _ := strconv.Atoi(id)
-	db.Find(&users)
-	if int(users[len(users)-1].ID) < reqID {
-		response(w, http.StatusNotFound, "try lower ID")
-		return false
-	}
-	return true
-}
-
 func isValidName(w http.ResponseWriter, name string, id ...string) bool {
 	var tmp []User
 	db.Where("name = ?", name).Find(&tmp)
 	if len(tmp) == 0 || (len(id) != 0 && fmt.Sprint(tmp[0].ID) == id[0]) {
 		return true
 	}
-	response(w, http.StatusOK, "choose another name")
+	resp(w, http.StatusOK, "choose another name")
 	return false
 }
 
@@ -65,8 +50,36 @@ func isValidAge(w http.ResponseWriter, age int) bool {
 	if age > 0 && age < 130 {
 		return true
 	}
-	response(w, http.StatusOK, "something wrong with age")
+	resp(w, http.StatusOK, "something wrong with age")
 	return false
+}
+
+func isValidRole(w http.ResponseWriter, role *string) bool {
+	if len(*role) == 0 {
+		*role = "user"
+		return true
+	}
+
+	for key, _ := range roleNumber {
+		if *role == key {
+			return true
+		}
+	}
+	resp(w, http.StatusBadRequest, "something wrong with role")
+	return false
+}
+
+func isValidID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "ID")
+		reqID, _ := strconv.Atoi(id)
+		db.Find(&users)
+		if int(users[len(users)-1].ID) < reqID {
+			resp(w, http.StatusNotFound, "try lower ID")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func RequireAuthentication(next http.Handler) http.Handler {
@@ -78,7 +91,7 @@ func RequireAuthentication(next http.Handler) http.Handler {
 
 		tknStr := jwtauth.TokenFromHeader(r)
 		if len(tknStr) == 0 {
-			response(w, http.StatusBadRequest, "need token")
+			resp(w, http.StatusBadRequest, "need token")
 			return
 		}
 		// Initialize a new instance of `Claims`
@@ -92,25 +105,36 @@ func RequireAuthentication(next http.Handler) http.Handler {
 		})
 		if err != nil {
 			if err == jwt.ErrSignatureInvalid {
-				response(w, http.StatusUnauthorized, "ErrSignatureInvalid")
+				resp(w, http.StatusUnauthorized, "ErrSignatureInvalid")
 				return
 			}
-			response(w, http.StatusBadRequest, "something wrong with token")
+			resp(w, http.StatusBadRequest, "something wrong with token")
 			return
 		}
 		if !tkn.Valid {
-			response(w, http.StatusUnauthorized, "time is up")
+			resp(w, http.StatusUnauthorized, "time is up")
 			return
 		}
 
 		id := chi.URLParam(r, "ID")
 		var u User
 		db.Where("id = ?", claims.Id).Find(&u)
-		if u.IsAdmin == false && id != claims.Id {
-			response(w, http.StatusForbidden, "access denied")
+		if roleNumber[u.Role] < 100 && id != claims.Id {
+			resp(w, http.StatusForbidden, "access denied")
 			return
 		}
 		// Assuming that passed, we can execute the authenticated handler
+		next.ServeHTTP(w, r)
+	})
+}
+
+func empty(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dbAdmin.Find(&users)
+		if len(users) == 0 {
+			resp(w, http.StatusOK, "stack is empty")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

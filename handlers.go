@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	"github.com/imdario/mergo"
 
 	"github.com/go-chi/chi"
 )
 
 func GetAll(w http.ResponseWriter, r *http.Request) {
 	db.Find(&users)
-	response(w, http.StatusOK, "all users", users)
+	resp(w, http.StatusOK, "all users", users)
 }
 
 func Create(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +22,7 @@ func Create(w http.ResponseWriter, r *http.Request) {
 
 	err := json.NewDecoder(r.Body).Decode(&userIn)
 	if err != nil {
-		response(w, http.StatusBadRequest, err.Error())
+		resp(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// читаем в UserIn
@@ -29,16 +30,19 @@ func Create(w http.ResponseWriter, r *http.Request) {
 	userIn.Password, _ = HashPassword(userIn.Password)
 	// хэшим пароль
 
-	if !isValidName(w, userIn.Name) || !isValidAge(w, userIn.Age) {
+	if !isValidName(w, userIn.Name) || !isValidAge(w, userIn.Age) || !isValidRole(w, &userIn.Role) {
 		return
 	}
 	// проверяем уникальность имени и валидность возраста
 
 	u := User(userIn)
-	db.Create(&u)
+	dbAdmin.Create(&u)
 	// добавляем новую строку в дб
 
-	response(w, http.StatusOK, "new user at the bottom", []User{u})
+	var us User
+	dbAdmin.Where("name = ?", u.Name).Find(&us)
+
+	resp(w, http.StatusOK, "new user waiting for admin approval", []User{us})
 	// выводим статус выполнения задачи
 }
 
@@ -48,28 +52,37 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	var userIn UserIn
 	err := json.NewDecoder(r.Body).Decode(&userIn)
 	if err != nil {
-		response(w, http.StatusBadRequest, err.Error())
+		resp(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// считываем введенную строку в UserIn
+	// считываем введенную строку в userIn
 
-	if !isValidID(w, requestedID) || !isValidName(w, userIn.Name, requestedID) || !isValidAge(w, userIn.Age) {
+	if len(userIn.Password) > 0 {
+		userIn.Password, _ = HashPassword(userIn.Password)
+		// хэшим пароль
+	}
+
+	var user User
+	db.Where("ID = ?", requestedID).Find(&user)
+	// запись, в которую надо внести изменения
+	nu := User(userIn)
+	// изменения
+	mergo.Merge(&nu, user)
+	// изменения внесены, новая записть в nu
+	if !isValidName(w, nu.Name, requestedID) || !isValidAge(w, nu.Age) || !isValidRole(w, &nu.Role) {
 		return
 	}
-	// проверка валидности айди
 	// уникальность имени
 	// валидность возраста
+	// проверить валидность роли в получившейся записи
 
-	userIn.Password, _ = HashPassword(userIn.Password)
-	// хэшим пароль
-
-	db.Model(&users).Where("ID = ?", requestedID).Update(&userIn)
+	db.Model(&users).Where("ID = ?", requestedID).Update(&nu)
 	// добавляем готовую и проверенную строку в дб
 
 	var u User
-	db.Where("name = ?", userIn.Name).Find(&u)
+	db.Where("name = ?", nu.Name).Find(&u)
 
-	response(w, http.StatusOK, fmt.Sprintf("user updated"), []User{u})
+	resp(w, http.StatusOK, fmt.Sprintf("user updated"), []User{u})
 	// выводим статус выполнения задачи
 }
 
@@ -90,7 +103,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	// нашли в бд строку с считанным именем
 
 	if !CheckPasswordHash(loginPassword.Password, user.Password) {
-		response(w, http.StatusUnauthorized, "wrong login or password")
+		resp(w, http.StatusUnauthorized, "wrong login or password")
 		return
 	}
 	// пара логин-пароль невалидна, выдаем статус и вылетаем
@@ -111,7 +124,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
 		// If there is an error in creating the JWT return an internal server error
-		response(w, http.StatusInternalServerError, "error in creating the JWT")
+		resp(w, http.StatusInternalServerError, "error in creating the JWT")
 		return
 	}
 
@@ -133,27 +146,72 @@ func GetOne(w http.ResponseWriter, r *http.Request) {
 	requestedID := chi.URLParam(r, "ID")
 	var userID User
 	db.First(&userID, requestedID)
-	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v", requestedID), []User{userID})
+	resp(w, http.StatusOK, fmt.Sprintf("user at ID = %v", requestedID), []User{userID})
 }
 
 func Del(w http.ResponseWriter, r *http.Request) {
 	requestedID := chi.URLParam(r, "ID")
 	db.Where("ID = ?", requestedID).Delete(&users)
-	response(w, http.StatusOK, fmt.Sprintf("user at ID = %v was deleted", requestedID))
+	resp(w, http.StatusOK, fmt.Sprintf("user at ID = %v was deleted", requestedID))
 }
 
-// func OnlyAdmin(h http.Handler) http.Handler {
-// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 		if r.Method == "OPTIONS" {
-// 			h.ServeHTTP(w, r)
-// 		} else {
-// 			tokenString, _ := jwtmiddleware.FromAuthHeader(r)
-// 			if !matchRole(tokenString, "admin") {
-// 				customRoleError(w, "Отказано в доступе", 403)
-// 				return
-// 			}
+func GetNew(w http.ResponseWriter, r *http.Request) {
+	var user User
+	dbAdmin.Last(&user)
+	resp(w, http.StatusOK, "APPROVE or DELETE", []User{user})
+}
 
-// 			h.ServeHTTP(w, r)
-// 		}
-// 	})
-// }
+func GetAllNew(w http.ResponseWriter, r *http.Request) {
+	dbAdmin.Find(&users)
+	resp(w, http.StatusOK, "all users", users)
+}
+
+func ApproveNew(w http.ResponseWriter, r *http.Request) {
+	var appUser ApproveUser
+	var user User
+
+	err := json.NewDecoder(r.Body).Decode(&appUser)
+	if err != nil {
+		resp(w, http.StatusBadRequest, "decoding went wrong")
+		return
+	}
+	// достали ответ админа, что делать с юзером
+	// и если есть - изменения
+
+	dbAdmin.Last(&user)
+	// достали последнюю запись
+
+	nu := User(appUser.NewUser)
+	//впринципе можно перекинуть в кейс апрув
+	if appUser.Approval == "APPROVE" {
+		mergo.Merge(&nu, user)
+		// если были внесены изменения, их внесли
+		// новый пользовательс админскими изменениями
+		// в nu
+
+		if !isValidRole(w, &nu.Role) || !isValidName(w, nu.Name) || !isValidAge(w, nu.Age) {
+			return
+		}
+		// проверка валидности роли готовой строки, раньше ее не сделать
+
+		nu.ID = 0 // не знаю почему, но без этого выдает ошибку на след строке
+		//вообще непонятно откуда он берет значение для айди
+
+		db.Create(&nu)
+		// закинули в основную базу
+
+		var u User
+		db.Where("name = ?", user.Name).Find(&u)
+		resp(w, http.StatusOK, "new user approved", []User{u})
+		// выводим статус выполнения задачи
+
+		dbAdmin.Where("id = ?", user.ID).Delete(&users)
+		// то, что обработали, удалили
+	} else if appUser.Approval == "DELETE" {
+		dbAdmin.Where("id = ?", user.ID).Delete(&users)
+		resp(w, http.StatusOK, "application deleted")
+	} else {
+		resp(w, http.StatusBadRequest, "cant understand what shoild i do :(")
+	}
+
+}

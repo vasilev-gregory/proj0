@@ -27,12 +27,18 @@ func Routes() {
 		r.Post("/", Create)
 		r.Post("/login", Login)
 		//admin or user
-		r.With(RequireAuthentication).Route("/{ID:[0-9]+}", func(r chi.Router) {
+		r.With(RequireAuthentication, isValidID).Route("/{ID:[0-9]+}", func(r chi.Router) {
 			r.Get("/", GetOne)
 			r.Put("/", Update)
 			r.Delete("/", Del)
 		})
-
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAuthentication)
+			r.Use(empty)
+			r.Get("/new", GetNew)
+			r.Post("/new", ApproveNew)
+			r.Get("/new/all", GetAllNew)
+		})
 	})
 	http.ListenAndServe(":3337", r)
 }
